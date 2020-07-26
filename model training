@@ -1,0 +1,130 @@
+import os
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+import numpy as np
+import tensorflow as tf
+from tensorflow.contrib import rnn
+import h5py
+
+V_lables = h5py.File('/caffe-master/models/bvlc_googlenet/RGB_Vlables.mat','r')
+#RGB/All
+T_lables = h5py.File('/caffe-master/models/bvlc_googlenet/RGB_Tlables.mat','r')
+Train_Data = h5py.File('/caffe-master/models/bvlc_googlenet/RGB_TrainData.mat','r')
+#RGB/Vll
+Val_Data = h5py.File('/caffe-master/models/bvlc_googlenet/RGB_ValData.mat','r')
+
+V_lables_t = np.transpose(V_lables['RGB_Vlables'])
+#RGB/All
+T_lables_t = np.transpose(T_lables['RGB_Tlables'])
+Train_Data_t = np.transpose(Train_Data['RGB_TrainData'])
+#RGB/All
+Val_Data_t = np.transpose(Val_Data['RGB_ValData'])
+
+X_train=Train_Data_t
+Y_train=T_lables_t
+X_Validation=Val_Data_t
+Y_Validation=V_lables_t
+
+
+learning_rate = 0.0001
+beta1 = 0.9
+beta2 = 0.99
+momentum = 0.9
+initial_accumulator_value = 0.001
+decay = 0.9
+hm_epochs = 100
+n_classes = 101
+batch_size = 256
+batch_size_val = 1024
+chunk_size = 1000
+n_chunks = 6
+rnn_size = 128
+keep_prob = tf.placeholder(tf.float32)
+
+
+
+trainSamples,FeaturesLength=Y_train.shape
+ValidationSamples,FeaturesLength=Y_Validation.shape
+loss=[];
+Val_Accuracy=[];   
+
+with tf.name_scope('Inputs'):
+    x = tf.placeholder('float', [None, None,chunk_size],name="Features")
+    y = tf.placeholder('float',name="Lables")
+    
+def recurrent_neural_network(x):
+    x = tf.unstack(x, n_chunks, 1)
+    
+    #LSTM layer
+    ##forward cell
+    lstm_cell_1 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    lstm_cell_2 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    
+    ##backward cell
+    lstm_cell_5 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    lstm_cell_6 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+
+    
+    
+    #dropout layer
+    lstm_fw_cell = tf.contrib.rnn.DropoutWrapper(cell=lstm_cell_1, input_keep_prob=1.0, output_keep_prob=keep_prob)
+    lstm_fw_cell = tf.contrib.rnn.DropoutWrapper(cell=lstm_cell_2, input_keep_prob=1.0, output_keep_prob=keep_prob)
+    lstm_bw_cell = tf.contrib.rnn.DropoutWrapper(cell=lstm_cell_5, input_keep_prob=1.0, output_keep_prob=keep_prob)
+    lstm_bw_cell = tf.contrib.rnn.DropoutWrapper(cell=lstm_cell_6, input_keep_prob=1.0, output_keep_prob=keep_prob)
+    
+    #Multi LSTM layer
+    cell_fw = tf.contrib.rnn.MultiRNNCell([lstm_cell_1], state_is_tuple=True)
+    cell_fw = tf.contrib.rnn.MultiRNNCell([lstm_cell_2], state_is_tuple=True)
+    cell_bw = tf.contrib.rnn.MultiRNNCell([lstm_cell_5], state_is_tuple=True)
+    cell_bw = tf.contrib.rnn.MultiRNNCell([lstm_cell_6], state_is_tuple=True)
+
+    try:
+        outputs, _, _ = rnn.static_bidirectional_rnn(cell_fw, cell_bw, x,
+                                              dtype=tf.float32)
+    except Exception:
+        outputs = rnn.static_bidirectional_rnn(cell_fw, cell_bw, x,
+                                        dtype=tf.float32)
+    weights = tf.Variable(tf.random_normal([2*rnn_size, n_classes]),name="weights1") 
+    biases =  tf.Variable(tf.random_normal([n_classes]),name="biases1")
+
+    return tf.matmul(outputs[-1], weights) + biases
+
+
+def train_recurrnet_neural_network(x):
+    
+    prediction= recurrent_neural_network(x)
+    best_accuracy = 0.0 
+    cost = tf.reduce_mean( tf.nn.softmax_cross_entropy_with_logits
+                      (logits=prediction, labels=y) )
+
+    optimizer = tf.train.AdamOptimizer(learning_rate).minimize(cost)
+
+    with tf.Session() as sess:
+
+        tf.device('/gpu:0')
+        sess.run(tf.global_variables_initializer())
+        
+        for epoch in range(hm_epochs):
+            epoch_loss = 0
+            k=0;
+            for _ in range(int(trainSamples/batch_size)):
+                epoch_x = X_train[k:k+batch_size,:]
+                epoch_y = Y_train[k:k+batch_size,:]
+                epoch_x= epoch_x.reshape((batch_size, n_chunks, chunk_size ))
+                _, c = sess.run([optimizer, cost], feed_dict={x: epoch_x, y: epoch_y})
+                epoch_loss += c
+                k=k+batch_size
+            correct = tf.equal(tf.argmax(prediction, 1), tf.argmax(y, 1))
+            print('Epoch', epoch, 'completed out of',hm_epochs,'loss:',epoch_loss)
+            loss.append(epoch_loss)
+            accuracy = tf.reduce_mean(tf.cast(correct, 'float'))
+            
+            accuracy_out = (accuracy.eval({x:X_Validation.reshape((-1,n_chunks, chunk_size)), y:Y_Validation}))
+            
+            Val_Accuracy.append(accuracy_out)
+
+            print('Validation Accuracy : ',accuracy_out,'  ||| Best Accuracy :',best_accuracy)
+#Convergence condition          
+            if epoch_loss <= 5.0:
+                break
+            
+train_recurrnet_neural_network(x)
