@@ -1,0 +1,110 @@
+videoNumber=1;
+net = caffe.Net('deploy.prototxt', 'bvlc_googlenet.caffemodel',   'test');
+net.blobs('data').reshape([227 227 3 1]);
+
+analysis=zeros(1,3);
+Features=zeros(1,1000);
+lables=zeros(1,1);
+
+jump=5;
+class=0;
+MainFolder=dir('D:\UCF101 dataset\UCF-101');
+MSize=length(MainFolder);
+
+for tt=3:MSize
+    class=class+1;
+    addpath(strcat(strcat('D:\UCF101 dataset\UCF-101\',MainFolder(tt).name)));
+    CFolder=dir(strcat(strcat('D:\UCF101 dataset\UCF-101\',MainFolder(tt).name),'\*.avi'));
+    CSize=length(CFolder);
+        for videoNumber=1:CSize
+                path=strcat(strcat('D:\UCF101 dataset\UCF-101\',MainFolder(tt).name),'\',CFolder(videoNumber).name);
+                vidObj = VideoReader(path); 
+                  numFrames=vidObj.NumberOfFrames;
+                  k=1;
+                for i=1:jump:numFrames-mod(numFrames,30)
+                    img=read(vidObj,i);
+                    tic
+                    im_data = imresize(img, [227 227]);
+                    res = net.forward({im_data}); % run forward
+                    Features(k,:) = res{end}; % get feature
+                    toc
+                    k=k+1;
+                end
+                [rr,cc]=size(Features);
+                NFeatures=reshape(Features(:,:),[rr/6 6000]);
+                filename=strcat('File_',int2str(videoNumber),'class_',int2str(class),'.csv');
+                csvwrite(filename,NFeatures);
+        end
+%     end
+end
+
+addpath(strcat('D:\caffe-master\models\bvlc_googlenet'));
+
+for i=1:101
+    CFolder=dir(strcat('D:\caffe-master\models\bvlc_googlenet\*class_',int2str(i),'.csv'));
+    CSize=length(CFolder);
+    for j=1:CSize
+        if j <= CSize*0.8
+            movefile (strcat('D:\caffe-master\models\bvlc_googlenet\',CFolder(j).name),'D:\caffe-master\models\bvlc_googlenet\RGB_Train\');
+        else
+            movefile (strcat('D:\caffe-master\models\bvlc_googlenet\',CFolder(j).name),'D:\caffe-master\models\bvlc_googlenet\RGB_Test\');
+        end
+    end
+end
+
+addpath(strcat('D:\caffe-master\models\bvlc_googlenet\RGB_Train'));
+Features=[];
+
+for i=1:101
+    CFolder=dir(strcat('D:\caffe-master\models\bvlc_googlenet\RGB_Train\*class_',int2str(i),'.csv'));
+    CSize=length(CFolder);
+    Features=[];
+    for j=1:CSize
+        File = csvread(CFolder(j).name);
+        Features=[Features;File];
+    end
+    filename=strcat('D:\caffe-master\models\bvlc_googlenet\RGB_Classes\Features_class_',int2str(i),'.csv');
+    csvwrite(filename,Features);
+end
+
+addpath(strcat('D:\caffe-master\models\bvlc_googlenet\RGB_Classes'));
+RGB_TrainData=[];
+RGB_ValData=[];
+RGB_TrainLables=[];
+RGB_ValLables=[];
+
+for j=1:101
+    File = csvread(strcat('D:\caffe-master\models\bvlc_googlenet\RGB_Classes\Features_class_',int2str(j),'.csv'));
+    [rr,cc]=size(File);
+    RGB_TrainData=[RGB_TrainData;File(1:floor(rr*0.8),:)];
+    RGB_ValData=[RGB_ValData;File(rr*0.8:end,:)];
+    tt=zeros(floor(rr*0.8),1);
+    tt(:)=j;
+    RGB_TrainLables=[RGB_TrainLables;tt];
+    vv=zeros(floor(rr-rr*0.8+1),1);
+    vv(:)=j;
+    RGB_ValLables=[RGB_ValLables;vv];
+    fprintf('class %d\n',j);
+end
+
+TotalFeaturesY=RGB_TrainLables;
+RGB_Tlables=zeros(length(TotalFeaturesY),101);
+
+for i=1:length(TotalFeaturesY)
+    for j=1:101
+    if TotalFeaturesY(i,1)==j
+        RGB_Tlables(i,j)=1;
+    end
+    end
+end
+
+TotalFeaturesY=RGB_ValLables;
+RGB_Vlables=zeros(length(TotalFeaturesY),101);
+
+for i=1:length(TotalFeaturesY)
+    for j=1:101
+    if TotalFeaturesY(i,1)==j
+        RGB_Vlables(i,j)=1;
+    end
+    end
+end
