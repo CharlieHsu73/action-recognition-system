@@ -1,0 +1,83 @@
+import tensorflow as tf
+from tensorflow.contrib import rnn
+from numpy import genfromtxt
+import numpy as np
+import os, fnmatch
+import time
+
+n_classes = 102
+chunk_size =1000
+n_chunks =6
+rnn_size = 128
+keep_prob = tf.placeholder(tf.float32)
+
+
+with tf.name_scope('Inputs'):
+    x = tf.placeholder('float', [None, None,chunk_size],name="Features")
+    y = tf.placeholder('float',name="Lables")
+    
+
+
+def recurrent_neural_network(x):
+    x = tf.unstack(x, n_chunks, 1)
+    lstm_cell_1 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    lstm_cell_2 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    lstm_cell_3 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+    lstm_cell_4 = tf.contrib.rnn.BasicLSTMCell(rnn_size, forget_bias=1.0, state_is_tuple=True)
+
+    
+    cell_fw = tf.contrib.rnn.MultiRNNCell([lstm_cell_1], state_is_tuple=True)
+    cell_fw = tf.contrib.rnn.MultiRNNCell([lstm_cell_2], state_is_tuple=True) 
+    cell_bw = tf.contrib.rnn.MultiRNNCell([lstm_cell_3], state_is_tuple=True)
+    cell_bw = tf.contrib.rnn.MultiRNNCell([lstm_cell_4], state_is_tuple=True)
+    
+
+    try:
+        outputs, _, _ = rnn.static_bidirectional_rnn(cell_fw, cell_bw, x,
+                                              dtype=tf.float32)
+    except Exception:
+        outputs = rnn.static_bidirectional_rnn(cell_fw, cell_bw, x,
+                                        dtype=tf.float32)
+
+    weights1 = tf.Variable(tf.random_normal([2*rnn_size, n_classes]),name="weights1")
+    biases1 =  tf.Variable(tf.random_normal([n_classes]),name="biases1")
+    return tf.matmul(outputs[-1], weights1) + biases1
+
+
+
+def train_recurrnet_neural_network(x):
+
+    prediction= recurrent_neural_network(x)
+    tf.device('/gpu:0')
+    ConfussionMatrix=[]
+    with tf.Session() as sess:
+
+        sess.run(tf.global_variables_initializer())
+
+        
+        for mm in range(1,102,1):
+                hist1=np.zeros(102)
+                TotalResult=np.zeros(102)
+                clNew='*class_'+str(mm)+'.csv'
+                ClassFiles=fnmatch.filter(os.listdir('D:/caffe-master/models/bvlc_alexnet/RGB_Test/'), clNew)
+                print('class Number=',mm)
+                for t in range(0,len(ClassFiles),1):
+                    time_start = time.clock()
+                    X_test = genfromtxt('D:/caffe-master/models/bvlc_alexnet/RGB_Test1/'+str(ClassFiles[t]), delimiter=',')
+                    lenghtX,dd=X_test.shape
+                    time_start = time.clock()
+                    labled=sess.run(tf.argmax(prediction,1), feed_dict={x: X_test.reshape((-1,n_chunks, chunk_size))})
+                    
+                    hist1[:]=0
+                    for k in range(len(labled)):
+                        hist1[labled[k]]  = hist1[labled[k]] +1
+                    time_elapsed = (time.clock() - time_start)
+                    print(time_elapsed)
+
+                    TotalResult[np.argmax(hist1)]=TotalResult[np.argmax(hist1)]+1
+
+                ConfussionMatrix.append(TotalResult)   
+   
+        return ConfussionMatrix
+
+ConfussionMatrix=train_recurrnet_neural_network(x)
